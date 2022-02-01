@@ -28,6 +28,7 @@ public:
 
 	void UpDown(float Value);
 	void LeftRight(float Value);
+	void Yaw(float Value);
 
 private:
 	UPROPERTY(VisibleAnyWhere)
