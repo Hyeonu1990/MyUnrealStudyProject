@@ -8,7 +8,8 @@ public class MyUnrealStudyProject : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "UMG" }); // UMG -> UI 관련
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore",
+															 "UMG", "NavigationSystem", "AIModule", "GameplayTasks" }); // UMG -> UI 관련
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
