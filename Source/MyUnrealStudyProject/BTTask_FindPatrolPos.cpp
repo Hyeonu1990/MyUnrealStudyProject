@@ -2,6 +2,7 @@
 
 
 #include "BTTask_FindPatrolPos.h"
+#include "MyAIController.h"
 #include "NavigationSystem.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "BehaviorTree/BehaviorTree.h"
