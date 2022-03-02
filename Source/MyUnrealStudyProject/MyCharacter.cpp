@@ -12,6 +12,10 @@
 #include "Components/WidgetComponent.h"
 #include "MyCharacterWidget.h"
 #include "MyAIController.h"
+#include "MyGameModeBase.h"
+#include "MyHUD.h"
+#include "Components/TextBlock.h"
+#include "Kismet/GameplayStatics.h" // UGameplayStatics 때문에 추가
 
 // Sets default values
 AMyCharacter::AMyCharacter()
@@ -53,6 +57,35 @@ AMyCharacter::AMyCharacter()
 
 	AIControllerClass = AMyAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+
+	#pragma region Unreal Containers
+	// string <-> FString
+	// vector <-> TArray
+	// unordered_amp <->TMap
+
+	TArray<int32> arr;
+	arr.Add(1);
+	int32 size = arr.Num();
+	for (int32 i = 0; i < size; i++)
+	{
+		int32 temp = arr[i];
+	}
+
+	for (TArray<int32>::TIterator it = arr.CreateIterator(); it; it++)
+	{
+		int32 temp = *it;
+	}
+
+	for (int32 temp : arr)
+	{
+
+	}
+
+	arr.Empty(); // stl vector : clear() // IsEmpty같은 의미가 아님
+
+	TMap<int32, int32> map;
+
+	#pragma endregion
 }
 
 // Called when the game starts or when spawned
@@ -62,14 +95,15 @@ void AMyCharacter::BeginPlay()
 
 	FName WeaponSocket(TEXT("hand_l_socket"));
 
-	auto CurrentWeapon = GetWorld()->SpawnActor<AMyWeapon>(FVector::ZeroVector, FRotator::ZeroRotator);
+	// auto CurrentWeapon = GetWorld()->SpawnActor<AMyWeapon>(FVector::ZeroVector, FRotator::ZeroRotator);
+	// if (CurrentWeapon)
+	// {
+	// 	CurrentWeapon->AttachToComponent(GetMesh(),
+	// 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+	// 		WeaponSocket);
+	// }
 
-	if (CurrentWeapon)
-	{
-		// CurrentWeapon->AttachToComponent(GetMesh(),
-		// 	FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-		// 	WeaponSocket);
-	}
+	RefreshUI();
 }
 
 void AMyCharacter::PostInitializeComponents()
@@ -110,11 +144,33 @@ void AMyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAxis(TEXT("Yaw"), this, &AMyCharacter::Yaw);
 }
 
+void AMyCharacter::RefreshUI()
+{
+	if (GetController()->IsPlayerController())
+	{
+		AMyGameModeBase* GameMode = Cast<AMyGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+		if (GameMode)
+		{
+			UMyHUD* MyHUD = Cast<UMyHUD>(GameMode->CurrentWidget);
+			if (MyHUD)
+			{
+				const FString AttackStr = FString::Printf(TEXT("Attack %01d/%01d"), AttackCount, MaxAttackCount);
+				MyHUD->AttackText->SetText(FText::FromString(AttackStr));
+			}
+		}
+	}
+}
+
 void AMyCharacter::Attack()
 {
 	if (IsAttacking)
 		return;
-
+#pragma region HUD 테스트
+	if (AttackCount <= 0)
+		return;
+	AttackCount--;
+	RefreshUI();
+#pragma endregion
 	AnimInstance->PlayAttackMontage();
 
 	AnimInstance->JumpToSection(AttackIndex);

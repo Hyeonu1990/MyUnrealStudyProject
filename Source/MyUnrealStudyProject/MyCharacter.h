@@ -31,6 +31,8 @@ public:
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+	void RefreshUI(); // HUD 테스트
+
 	void Attack();
 	void AttackCheck();
 
@@ -76,4 +78,8 @@ public:
 
 	UPROPERTY(VisibleAnywhere)
 	class UWidgetComponent* HpBar;
+
+	// HUD 테스트
+	int32 AttackCount = 5;
+	int32 MaxAttackCount = 5;
 };
