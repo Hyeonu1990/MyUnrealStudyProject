@@ -7,6 +7,8 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "../FirstPlayer/FirstPlayerProjectile.h"
+#include "Kismet/GameplayStatics.h"
 
 //////////////////////////////////////////////////////////////////////////
 // AShootingCharacter
@@ -19,11 +21,6 @@ AShootingCharacter::AShootingCharacter()
 	// set our turn rates for input
 	BaseTurnRate = 45.f;
 	BaseLookUpRate = 45.f;
-
-	// Don't rotate when the controller rotates. Let that just affect the camera.
-	bUseControllerRotationPitch = false;
-	bUseControllerRotationYaw = false;
-	bUseControllerRotationRoll = false;
 
 	// Configure character movement
 	GetCharacterMovement()->bOrientRotationToMovement = true; // Character moves in the direction of input...
@@ -49,8 +46,161 @@ AShootingCharacter::AShootingCharacter()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName); // Attach the camera to the end of the boom and let the boom adjust to match the controller orientation
 	FollowCamera->bUsePawnControlRotation = false; // Camera does not rotate relative to arm
 
-	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
-	// are set in the derived blueprint asset named MyCharacter (to avoid direct content references in C++)
+	// Set Default Mesh
+	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -97.f), FRotator(0.f, -90.f, 0.f));
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> SM(TEXT("SkeletalMesh'/Game/AnimStarterPack/UE4_Mannequin/Mesh/SK_Mannequin.SK_Mannequin'"));
+	if (SM.Succeeded())
+	{
+		GetMesh()->SetSkeletalMesh(SM.Object); 
+	}
+	GetMesh()->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	static ConstructorHelpers::FObjectFinder<UClass> AB(TEXT("AnimBlueprint'/Game/AnimStarterPack/ABP_ShootAnim.ABP_ShootAnim_C'"));
+	if (AB.Succeeded())
+	{
+		GetMesh()->SetAnimClass(AB.Object);
+	}
+
+#pragma region FPS
+    // Create a CameraComponent	
+	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
+	FirstPersonCameraComponent->SetupAttachment(GetCapsuleComponent());
+	FirstPersonCameraComponent->SetRelativeLocation(DefaultFPCameraPos); // Position the camera
+	FirstPersonCameraComponent->bUsePawnControlRotation = true;
+
+	// Create a mesh component that will be used when being viewed from a '1st person' view (when controlling this pawn)
+	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CharacterMesh1P"));
+	Mesh1P->SetOnlyOwnerSee(true);
+	Mesh1P->SetupAttachment(FirstPersonCameraComponent);
+	Mesh1P->bCastDynamicShadow = false;
+	Mesh1P->CastShadow = false;
+	Mesh1P->SetRelativeRotation(FRotator(1.9f, -19.19f, 5.2f));
+	Mesh1P->SetRelativeLocation(FVector(-0.5f, -4.4f, -155.7f));
+    static ConstructorHelpers::FObjectFinder<USkeletalMesh> SM_arm(TEXT("SkeletalMesh'/Game/FirstPerson/Character/Mesh/SK_Mannequin_Arms.SK_Mannequin_Arms'"));
+	if (SM_arm.Succeeded())
+	{
+		Mesh1P->SetSkeletalMesh(SM_arm.Object); 
+	}
+    Mesh1P->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	static ConstructorHelpers::FObjectFinder<UClass> AB_arm(TEXT("AnimBlueprint'/Game/FirstPerson/Animations/FirstPerson_AnimBP.FirstPerson_AnimBP_C'"));
+	if (AB_arm.Succeeded())
+	{
+		Mesh1P->SetAnimClass(AB_arm.Object);
+	}
+
+	// Create a gun mesh component
+	FP_Gun = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FP_Gun"));
+	FP_Gun->SetOnlyOwnerSee(false);			// otherwise won't be visible in the multiplayer
+	FP_Gun->bCastDynamicShadow = false;
+	FP_Gun->CastShadow = false;
+	// FP_Gun->SetupAttachment(Mesh1P, TEXT("GripPoint"));
+	FP_Gun->SetupAttachment(RootComponent);
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> SM_gun(TEXT("SkeletalMesh'/Game/FirstPerson/FPWeapon/Mesh/SK_FPGun.SK_FPGun'"));
+	if (SM_gun.Succeeded())
+	{
+		FP_Gun->SetSkeletalMesh(SM_gun.Object); 
+	}
+
+	FP_MuzzleLocation = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzleLocation"));
+	FP_MuzzleLocation->SetupAttachment(FP_Gun);
+	FP_MuzzleLocation->SetRelativeLocation(FVector(0.2f, 48.4f, -10.6f));
+
+	// Default offset from the character location for projectiles to spawn
+	GunOffset = FVector(100.0f, 0.0f, 10.0f);
+
+	static ConstructorHelpers::FClassFinder<AFirstPlayerProjectile> PR(TEXT("Blueprint'/Game/FirstPersonCPP/Blueprints/FirstPersonProjectile.FirstPersonProjectile_C'"));
+	if (PR.Succeeded())
+	{
+		ProjectileClass = PR.Class;
+	}
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> FS(TEXT("SoundWave'/Game/FirstPerson/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02'"));
+	if (FS.Succeeded())
+	{
+		FireSound = FS.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UAnimMontage> FA(TEXT("AnimMontage'/Game/FirstPerson/Animations/FirstPersonFire_Montage.FirstPersonFire_Montage'"));
+	if (FA.Succeeded())
+	{
+		FireAnimation = FA.Object;
+	}
+#pragma endregion
+}
+
+void AShootingCharacter::BeginPlay()
+{
+	// Call the base class  
+	Super::BeginPlay();
+
+	OnFPCamera = true;
+	SetActiveCamera();
+}
+
+void AShootingCharacter::SetActiveCamera()
+{
+	Mesh1P->SetHiddenInGame(!OnFPCamera, false);
+	GetMesh()->SetHiddenInGame(OnFPCamera, false);
+
+	//Attach gun mesh component to Skeleton, doing it here because the skeleton is not yet created in the constructor
+	FP_Gun->AttachToComponent(OnFPCamera ? Mesh1P : GetMesh(), FAttachmentTransformRules(EAttachmentRule::SnapToTarget, true), TEXT("GripPoint"));
+
+	if (OnFPCamera)
+	{
+		FirstPersonCameraComponent->Activate();
+		FollowCamera->Deactivate();
+	}
+	else
+	{
+		FirstPersonCameraComponent->Deactivate();
+		FollowCamera->Activate();
+	}
+}
+
+void AShootingCharacter::OnChangeCamera() 
+{
+	if (PronePressed || GetCharacterMovement()->MovementMode == MOVE_None)
+		return;
+	OnFPCamera = !OnFPCamera;
+	SetActiveCamera(); 
+}
+
+void AShootingCharacter::OnFire() 
+{
+    // try and fire a projectile
+	if (ProjectileClass != nullptr)
+	{
+		UWorld* const World = GetWorld();
+		if (World != nullptr)
+		{
+			const FRotator SpawnRotation = GetControlRotation();
+			// MuzzleOffset is in camera space, so transform it to world space before offsetting from the character location to find the final muzzle position
+			const FVector SpawnLocation = ((FP_MuzzleLocation != nullptr) ? FP_MuzzleLocation->GetComponentLocation() : GetActorLocation()) + SpawnRotation.RotateVector(GunOffset);
+
+			//Set Spawn Collision Handling Override
+			FActorSpawnParameters ActorSpawnParams;
+			ActorSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButDontSpawnIfColliding;
+
+			// spawn the projectile at the muzzle
+			World->SpawnActor<AFirstPlayerProjectile>(ProjectileClass, SpawnLocation, SpawnRotation, ActorSpawnParams);
+		}
+	}
+
+	// try and play the sound if specified
+	if (FireSound != nullptr)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+	}
+
+	// try and play a firing animation if specified
+	if (FireAnimation != nullptr)
+	{
+		// Get the animation object for the arms mesh
+		UAnimInstance* AnimInstance = Mesh1P->GetAnimInstance();
+		if (AnimInstance != nullptr)
+		{
+			AnimInstance->Montage_Play(FireAnimation, 1.f);
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -60,6 +210,7 @@ void AShootingCharacter::SetupPlayerInputComponent(class UInputComponent* Player
 {
 	// Set up gameplay key bindings
 	check(PlayerInputComponent);
+
 	PlayerInputComponent->BindAction("Jump", IE_Pressed, this, &AShootingCharacter::PressJump);
 	PlayerInputComponent->BindAction("Jump", IE_Released, this, &AShootingCharacter::ReleaseJump);
 	
@@ -69,6 +220,11 @@ void AShootingCharacter::SetupPlayerInputComponent(class UInputComponent* Player
 	PlayerInputComponent->BindAction("Jog", IE_Released, this, &AShootingCharacter::ReleaseJog);
 
 	PlayerInputComponent->BindAction("Prone", IE_Pressed, this, &AShootingCharacter::PressProne);
+
+    // Bind fire event
+	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &AShootingCharacter::OnFire);
+
+	PlayerInputComponent->BindAction("CameraChange", IE_Pressed, this, &AShootingCharacter::OnChangeCamera);
 
 	PlayerInputComponent->BindAxis("MoveForward", this, &AShootingCharacter::MoveForward);
 	PlayerInputComponent->BindAxis("MoveRight", this, &AShootingCharacter::MoveRight);
@@ -80,20 +236,6 @@ void AShootingCharacter::SetupPlayerInputComponent(class UInputComponent* Player
 	PlayerInputComponent->BindAxis("TurnRate", this, &AShootingCharacter::TurnAtRate);
 	PlayerInputComponent->BindAxis("LookUp", this, &APawn::AddControllerPitchInput);
 	PlayerInputComponent->BindAxis("LookUpRate", this, &AShootingCharacter::LookUpAtRate);
-
-	// handle touch devices
-	PlayerInputComponent->BindTouch(IE_Pressed, this, &AShootingCharacter::TouchStarted);
-	PlayerInputComponent->BindTouch(IE_Released, this, &AShootingCharacter::TouchStopped);
-}
-
-void AShootingCharacter::TouchStarted(ETouchIndex::Type FingerIndex, FVector Location)
-{
-		Jump();
-}
-
-void AShootingCharacter::TouchStopped(ETouchIndex::Type FingerIndex, FVector Location)
-{
-		StopJumping();
 }
 
 void AShootingCharacter::TurnAtRate(float Rate)
@@ -112,19 +254,13 @@ void AShootingCharacter::MoveForward(float Value)
 {
 	if ((Controller != nullptr) && (Value != 0.0f))
 	{
-		// // find out which way is forward
-		// const FRotator Rotation = Controller->GetControlRotation();
-		// const FRotator YawRotation(0, Rotation.Yaw, 0);
-		
-		// // get forward vector
-		// const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-		
-		// AddMovementInput(Direction, Value);
-		
 		const FRotator Rotation = FollowCamera->GetComponentTransform().Rotator();//Controller->GetControlRotation();
 		const FRotator YawRotation(0, 0, Rotation.Yaw);
 		const FVector Direction = FollowCamera->GetForwardVector();//FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 		AddMovementInput(Direction, Value);
+		
+        //FPS
+        //AddMovementInput(GetActorForwardVector(), Value);
 	}
 }
 
@@ -132,21 +268,15 @@ void AShootingCharacter::MoveRight(float Value)
 {
 	if ( (Controller != nullptr) && (Value != 0.0f) )
 	{
-		// // find out which way is right
-		// const FRotator Rotation = Controller->GetControlRotation();
-		// const FRotator YawRotation(0, Rotation.Yaw, 0);
-	
-		// // get right vector 
-		// const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-		// // add movement in that direction
-		// AddMovementInput(Direction, Value);
-
-		const FRotator Rotation = FollowCamera->GetComponentTransform().Rotator();//Controller->GetControlRotation();
-		const FRotator YawRotation(0, 0, Rotation.Yaw);
-		const FVector Direction = FollowCamera->GetRightVector();//FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0, Rotation.Yaw, 0);
+		const FVector Direction = UKismetMathLibrary::GetRightVector(FRotator(0.0f, Rotation.Yaw, 0.0f));//FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 		//if (GetCharacterMovement()->MovementMode != MOVE_None)
 		AddMovementInput(Direction, Value);
 		//AddMovementInput(FollowCamera->GetRightVector(), Value);
+
+        //FPS
+        //AddMovementInput(GetActorRightVector(), Value);
 	}
 }
 
@@ -159,9 +289,15 @@ void AShootingCharacter::PressCrouch()
 		CrouchPressed = !CrouchPressed;
 
 		if (CrouchPressed)
+		{
+			FirstPersonCameraComponent->SetRelativeLocation(CrouchedFPCameraPos); // Position the camera
 			GetCharacterMovement()->MaxWalkSpeed = 160.f;
+		}
 		else
+		{
+			FirstPersonCameraComponent->SetRelativeLocation(DefaultFPCameraPos); // Position the camera
 			GetCharacterMovement()->MaxWalkSpeed = JogPressed ? 375.f : 200.f;
+		}
 	}
 }
 
@@ -179,7 +315,7 @@ void AShootingCharacter::ReleaseJog()
 
 void AShootingCharacter::PressProne()
 {
-	if (!CrouchPressed && !JumpPressed)
+	if (!CrouchPressed && !JumpPressed && !OnFPCamera)
 	{
 		if (!PronePressed && GetCharacterMovement()->MovementMode != MOVE_None)
 		{

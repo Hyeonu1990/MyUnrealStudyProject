@@ -14,4 +14,5 @@ class MYUNREALSTUDYPROJECT_API AShootingGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
 	
+	AShootingGameMode();
 };
