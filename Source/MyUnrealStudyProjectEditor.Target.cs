@@ -10,5 +10,9 @@ public class MyUnrealStudyProjectEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V2;
 		ExtraModuleNames.AddRange( new string[] { "MyUnrealStudyProject" } );
+
+		// Xcode 13.3 업데이트 이후 빌드 안되는 현상을 위한 수정
+		bOverrideBuildEnvironment = true;
+		AdditionalCompilerArguments = "-Wno-unused-but-set-variable";
 	}
 }
